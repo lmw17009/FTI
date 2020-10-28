@@ -15,7 +15,8 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs,
-  BarcodeHook, Vcl.StdCtrls, Vcl.Menus, Vcl.ExtCtrls, System.JSON, JsonAdjust;
+  BarcodeHook, Vcl.StdCtrls, Vcl.Menus, Vcl.ExtCtrls, System.JSON,
+  Winapi.TlHelp32, JsonAdjust;
 
 const
   FstSpltStr = ',';
@@ -23,7 +24,7 @@ const
   ConfigFilePath = 'C:\ProgramConfigFileFolder\';
   AutoBarcodeMode = 1; //0= not autohook,1=auto hook
   WorkMode = 1; //0=PPID;1=json
-  version = '2020-09-17';
+  version = '2020-10-28';
 
 type
   TForm1 = class(TForm)
@@ -82,6 +83,8 @@ type
     function FTIPathInI: Boolean;
     function SaveFTIPath2TXT(SavePos: Integer; FileName, SavePath: string): Boolean;
     procedure DelayRun(MS: LongInt);
+    procedure KillProcess(FileName: string);
+    function FindProcess(ProcessName: string): Boolean;
   end;
 
 var
@@ -238,7 +241,7 @@ begin
     begin
       CloseProgram;
     end;
-
+    FindProcess('FTISTUDIOPRODUCTION'); //关闭FTI进程
     if not CreateProcess(nil, PWideChar(ParamaLineStr), nil, nil, True, CREATE_NEW_CONSOLE or NORMAL_PRIORITY_CLASS, nil, nil, StInfo, PInfo) then
     begin
       MmoAdd('BarcodeCheck:程序启动失败。');
@@ -490,6 +493,40 @@ begin
 
 end;
 
+function TForm1.FindProcess(ProcessName: string): Boolean;
+var
+  hSnapshot: THandle; //用于获得进程列表
+  lppe: TProcessEntry32; //用于查找进程
+  Found: Boolean; //用于判断进程遍历是否完成
+  KillHandle: THandle; //用于杀死进程
+  ProcesStr, ProcesStr1: string;
+begin
+  Result := False;
+  hSnapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); //获得系统进程列表
+  lppe.dwSize := SizeOf(TProcessEntry32); //在调用Process32First API之前，需要初始化lppe记录的大小
+  Found := Process32First(hSnapshot, lppe); //将进程列表的第一个进程信息读入ppe记录中
+  while Found do
+  begin
+    ProcesStr := UpperCase(ExtractFileName(lppe.szExeFile));
+    ProcesStr1 := UpperCase(lppe.szExeFile);
+    //MmoAdd(ProcesStr+'/'+ProcesStr1);
+    //if ((UpperCase(ExtractFileName(lppe.szExeFile)) = UpperCase(ProcessName)) or (UpperCase(lppe.szExeFile) = UpperCase(ProcessName))) then
+    if (Pos(ProcessName, ProcesStr) > 0) or (Pos(ProcessName, ProcesStr1) > 0) then
+    begin
+      if MessageDlg('发现已打开FTI程序,是否将其关闭?', TMsgDlgType.mtWarning, [mbYes, mbNo], 0) = mrYes then
+      begin
+      //由于我的操作系统是xp，所以在调用TerminateProcess API之前
+      //我必须先获得关闭进程的权限,如果操作系统是NT以下可以直接中止进程
+        KillHandle := OpenProcess(PROCESS_TERMINATE, False, lppe.th32ProcessID);
+        TerminateProcess(KillHandle, 0); //强制关闭进程
+        CloseHandle(KillHandle);
+      end;
+      Result := True;
+    end;
+    Found := Process32Next(hSnapshot, lppe); //将进程列表的下一个进程信息读入lppe记录中
+  end;
+end;
+
 procedure TForm1.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
   //FreeAndNil(FBarReader);
@@ -545,7 +582,7 @@ var
   FTIPath, PPIDDir, Path: string;
   Txt: TextFile;
 begin
-  Result := False;
+  Result := True;
   try
     Path := ExtractFilePath(ParamStr(0)); //获取程序路径
     if not FileExists(Path + 'Path.txt') then
@@ -569,7 +606,8 @@ begin
       else
       begin
         mmo1.Lines.Add('>路径文件获取程序路径不正确！');
-        mmo1.Lines.Add('>请重新加载FTI生产模式程序路径！');
+        mmo1.Lines.Add('>请重新设置加载FTI生产模式程序路径！');
+        Result := False;
       end;
       if DirectoryExists(PPIDDir) then
       begin
@@ -582,11 +620,16 @@ begin
       begin
         mmo1.Lines.Add('>路径文件获取程序路径不正确！');
         mmo1.Lines.Add('>请点击设置加载路径！');
+        Result := False;
       end;
-      Result := True;
+
     end;
   except
     mmo1.Lines.Add('>Path路径文件内容错误！');
+  end;
+  if not Result then
+  begin
+    btn2.Enabled := True;
   end;
 
 end;
@@ -629,6 +672,11 @@ begin
   begin
     MmoAdd('Barcode监控开始...');
   end;
+end;
+
+procedure TForm1.KillProcess(FileName: string);
+begin
+//
 end;
 
 procedure TForm1.mmo1Change(Sender: TObject);
